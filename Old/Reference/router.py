@@ -5,7 +5,7 @@ import os
 from dotenv import load_dotenv
 import json
 
-# --- 1. SETUP (Same as before) ---
+# --- 1. SETUP ---
 load_dotenv()
 app = FastAPI()
 
@@ -34,15 +34,15 @@ class RouteResponse(BaseModel):
     amount_out_usdc: float
     gas_cost_usdc: float
     net_out_usdc: float
-    execution_payload: dict  # This is new!
+    execution_payload: dict  
 
-# --- 3. THE LOGIC (Refactored for API) ---
+# --- 3. THE LOGIC ---
 @app.post("/quote", response_model=RouteResponse)
 async def get_best_route(req: RouteRequest):
     if req.token_in != "ETH" or req.token_out != "USDC":
         raise HTTPException(status_code=400, detail="Only ETH->USDC supported in V1")
 
-    print(f"⚡ API REQUEST: {req.amount} ETH -> USDC")
+    print(f"API REQUEST: {req.amount} ETH -> USDC")
     
     amount_in_wei = w3.to_wei(req.amount, 'ether')
     
@@ -82,7 +82,7 @@ async def get_best_route(req: RouteRequest):
                     # THE PAYLOAD: This is what the frontend needs to execute
                     "execution_payload": {
                         "to": "0xE592427A0AEce92De3Edee1F18E0157C05861564", # Uniswap Router Address
-                        "data": "0x...", # In next step, we generate the real hex data
+                        "data": "0x...", # In production, this would be the actual calldata for the swap
                         "value": str(amount_in_wei)
                     }
                 }
