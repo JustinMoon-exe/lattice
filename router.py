@@ -43,9 +43,9 @@ async def get_best_route(req: RouteRequest):
         raise HTTPException(status_code=400, detail="Only ETH->USDC supported in V1")
 
     print(f"⚡ API REQUEST: {req.amount} ETH -> USDC")
-    
+
     amount_in_wei = w3.to_wei(req.amount, 'ether')
-    
+
     # Get Gas Price
     base_fee = w3.eth.get_block('latest')['baseFeePerGas']
     gas_price_wei = base_fee + w3.to_wei(1, 'gwei')
@@ -65,13 +65,13 @@ async def get_best_route(req: RouteRequest):
         try:
             params = (WETH_ADDRESS, USDC_ADDRESS, amount_in_wei, fee, 0)
             result = contract.functions.quoteExactInputSingle(params).call()
-            
+
             amt_out_raw = result[0]
             gas_est = result[3]
-            
+
             gas_cost_usdc = float(w3.from_wei(gas_est * gas_price_wei, 'ether')) * eth_price
             net_out = (amt_out_raw / 10**6) - gas_cost_usdc
-            
+
             if net_out > best_net:
                 best_net = net_out
                 best_pkg = {
@@ -88,10 +88,10 @@ async def get_best_route(req: RouteRequest):
                 }
         except:
             continue
-            
+
     if not best_pkg:
         raise HTTPException(status_code=500, detail="No liquidity found")
-        
+
     return best_pkg
 
 # Run with: uvicorn server:app --reload

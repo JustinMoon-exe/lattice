@@ -1,0 +1,4 @@
+.env
+.venv/
+lattice/target/
+__pycache__/
