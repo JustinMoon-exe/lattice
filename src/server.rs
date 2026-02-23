@@ -1,9 +1,10 @@
-use axum::{Json, Router, extract::{Path, State}, http::StatusCode, routing::{get, post}};
+use axum::{Json, Router, extract::{Path, State}, http::{Method, StatusCode}, routing::{get, post}};
 use dotenvy;
 use ethers::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::{Arc, RwLock}};
 use tokio::task::JoinSet;
+use tower_http::cors::{Any, CorsLayer};
 use uuid::Uuid;
 
 // 0.01% pool is dominant for stable↔stable pairs (USDC/USDT).
@@ -570,10 +571,18 @@ pub async fn status_handler(
 // ---------------------------------------------------------------------------
 
 pub fn build_app(state: Arc<AppState>) -> Router {
+    // Permissive CORS: allows any origin/header so the frontend can be deployed
+    // to a separate host (Vercel, GitHub Pages, etc.) without proxy tricks.
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods([Method::GET, Method::POST])
+        .allow_headers(Any);
+
     Router::new()
         .route("/health", get(health_handler))
         .route("/quote", post(quote_handler))
         .route("/status/{quote_id}", get(status_handler))
+        .layer(cors)
         .with_state(state)
 }
 

@@ -35,12 +35,29 @@ body {
 
 header {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 1rem;
   padding: 2rem 0 2.5rem;
   border-bottom: 1px solid var(--border);
   margin-bottom: 2rem;
 }
+
+.wallet-area { margin-left: auto; }
+
+.btn-wallet {
+  background: transparent;
+  border: 1px solid var(--accent);
+  border-radius: 7px;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.4rem 0.9rem;
+  transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+
+.btn-wallet:hover { background: var(--accent); color: #fff; }
 
 .logo {
   font-size: 1.4rem;
@@ -157,6 +174,13 @@ input::placeholder { color: var(--muted); }
 
 .btn-xs { width: auto; padding: 0.25rem 0.6rem; font-size: 0.75rem; }
 
+/* Two-button row after quote */
+.action-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+
 /* ── Stats grid ──────────────────────────────────────────────────────────── */
 
 dl.grid {
@@ -260,6 +284,12 @@ dd.highlight {
   font-size: 0.82rem;
   line-height: 1.5;
   padding: 0.75rem 1rem;
+}
+
+.notice--info {
+  background: #0f1822;
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  color: #bfdbfe;
 }
 
 .notice code {
