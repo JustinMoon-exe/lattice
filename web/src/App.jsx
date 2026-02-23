@@ -130,8 +130,8 @@ export default function App() {
   return (
     <div className="app">
       <header>
-        <div className="logo">⬡ Lattice</div>
-        <span className="tagline">Non-custodial payment routing</span>
+        <div className="logo">Lattice</div>
+        <span className="tagline">Testbench</span>
       </header>
 
       <main>
