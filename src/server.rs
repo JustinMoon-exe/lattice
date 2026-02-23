@@ -26,6 +26,14 @@ abigen!(
     ]"#
 );
 
+// ERC-20 transfer — used for same-token direct payments (USDC → USDC, USDT → USDT).
+abigen!(
+    IERC20,
+    r#"[
+        function transfer(address to, uint256 amount) external returns (bool)
+    ]"#
+);
+
 // ---------------------------------------------------------------------------
 // Token resolution
 // ---------------------------------------------------------------------------
@@ -196,6 +204,11 @@ impl ChainService {
         recipient: String,
         slippage: f64,
     ) -> Option<QuoteResult> {
+        // Same-token pair = direct P2P transfer, not a swap.
+        if token_in == token_out {
+            return self.get_direct_transfer(token_in, amount, recipient).await;
+        }
+
         let recipient_addr: Address = recipient.parse().ok()?;
         let addr_in = self.config.resolve_token(token_in);
         let addr_out = self.config.resolve_token(token_out);
@@ -313,6 +326,89 @@ impl ChainService {
 
         best
     }
+
+    /// Generates calldata for a direct token transfer (same token_in == token_out).
+    /// For ETH: native send (value = amount, data = 0x).
+    /// For ERC-20: calls transfer(recipient, amount) on the token contract.
+    /// No Uniswap pool involved; gas is ~21k (ETH) or ~65k (ERC-20).
+    async fn get_direct_transfer(
+        &self,
+        token: Token,
+        amount: f64,
+        recipient: String,
+    ) -> Option<QuoteResult> {
+        let recipient_addr: Address = recipient.parse().ok()?;
+        let token_addr = self.config.resolve_token(token);
+        let amount_raw = to_raw_units(amount, token.decimals());
+
+        let block = match self.client.get_block(BlockNumber::Latest).await {
+            Ok(Some(b)) => b,
+            Ok(None) => {
+                eprintln!("[{}] get_block returned None", self.config.name);
+                return None;
+            }
+            Err(e) => {
+                eprintln!("[{}] RPC error (get_block): {}", self.config.name, e);
+                return None;
+            }
+        };
+        let base_fee = block.base_fee_per_gas.unwrap_or(U256::from(10_000_000_000u64));
+        let gas_price_wei = base_fee + U256::from(1_500_000_000u64);
+        let eth_price_usd = self.native_token_price_usd().await;
+
+        let (calldata, tx_to, tx_value, gas_units) = if token == Token::Eth {
+            // Native ETH transfer — no calldata needed.
+            (
+                Bytes::default(),
+                format!("{recipient_addr:#x}"),
+                amount_raw.to_string(),
+                U256::from(21_000u64),
+            )
+        } else {
+            // ERC-20 transfer(recipient, amount) on the token contract.
+            let contract = IERC20::new(token_addr, self.client.clone());
+            let cd = contract
+                .transfer(recipient_addr, amount_raw)
+                .calldata()
+                .unwrap_or_default();
+            (
+                cd,
+                format!("{token_addr:#x}"),
+                "0".to_string(),
+                U256::from(65_000u64),
+            )
+        };
+
+        let gas_cost_usd =
+            (gas_units.as_u128() as f64 * gas_price_wei.as_u128() as f64 / 1e18) * eth_price_usd;
+
+        let out_usd = match token {
+            Token::Usdc | Token::Usdt => from_raw_units(amount_raw, 6),
+            Token::Eth => from_raw_units(amount_raw, 18) * eth_price_usd,
+        };
+
+        let gas_limit = gas_units.saturating_mul(U256::from(110u64)) / U256::from(100u64);
+
+        Some(QuoteResult {
+            quote_id: String::new(),
+            chain_name: self.config.name.to_string(),
+            chain_id: self.config.chain_id,
+            token_in: format!("{token_addr:#x}"),
+            token_out: format!("{token_addr:#x}"),
+            amount_in: amount_raw.to_string(),
+            amount_out_min: amount_raw.to_string(), // no slippage on direct transfer
+            fee_tier: 0,                            // 0 = no pool, direct transfer
+            net_usd_value: ((out_usd - gas_cost_usd) * 100.0).round() / 100.0,
+            requires_approval: false, // transfer() called by sender directly
+            approval_spender: String::new(),
+            tx: TxPayload {
+                to: tx_to,
+                data: format!("{calldata}"),
+                value: tx_value,
+                gas_limit: gas_limit.to_string(),
+            },
+        })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -396,8 +492,8 @@ pub async fn quote_handler(
     let token_out = Token::from_str(&req.token_out)
         .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": format!("unknown token_out: {}", req.token_out) }))))?;
 
-    if token_in == token_out {
-        err!(StatusCode::BAD_REQUEST, "token_in and token_out must differ");
+    if token_in == token_out && token_in == Token::Eth {
+        err!(StatusCode::BAD_REQUEST, "cannot swap ETH to ETH");
     }
 
     let target_keys: Vec<String> = match &req.chain_filter {
@@ -612,15 +708,8 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 
-    #[tokio::test]
-    async fn rejects_same_token() {
-        let (status, body) = post_quote(app(), json!({
-            "token_in": "usdc", "token_out": "usdc",
-            "amount": 500.0, "recipient": RECIPIENT
-        })).await;
-        assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert!(body.to_string().contains("differ"));
-    }
+    // same-token (usdc→usdc) is a valid direct-transfer user story — not an error.
+    // Covered by live_usdc_direct_transfer_base below.
 
     #[tokio::test]
     async fn rejects_unknown_token_in() {
@@ -727,6 +816,22 @@ mod tests {
     // Live integration tests — require real RPC URLs in environment
     // Run with: cargo test -- --ignored
     // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    #[ignore = "requires live RPC (BASE_RPC_URL)"]
+    async fn live_usdc_direct_transfer_base() {
+        // USDC → USDC = direct ERC-20 transfer, no swap, no approval needed.
+        let (status, body) = post_quote(app(), json!({
+            "token_in": "usdc", "token_out": "usdc",
+            "amount": 500.0, "recipient": RECIPIENT, "chain_filter": "base"
+        })).await;
+        assert_eq!(status, StatusCode::OK, "body: {body}");
+        assert_eq!(body["fee_tier"], 0,      "direct transfer has no pool fee");
+        assert_eq!(body["requires_approval"], false, "transfer() needs no approve()");
+        assert_eq!(body["tx"]["value"], "0", "ERC-20 send has zero ETH value");
+        assert_eq!(body["amount_out_min"], body["amount_in"]);
+        assert!(body["net_usd_value"].as_f64().unwrap() > 0.0);
+    }
 
     #[tokio::test]
     #[ignore = "requires live RPC (ALCHEMY_HTTP_URL)"]
